@@ -7,13 +7,15 @@ from requests import HTTPError
 
 from social.backends.oauth import BaseOAuth2
 from social.exceptions import AuthCanceled, AuthUnknownError
+from collections import OrderedDict
 
 
 class WeixinOAuth2(BaseOAuth2):
     """Weixin OAuth authentication backend"""
     name = 'weixin'
     ID_KEY = 'openid'
-    AUTHORIZATION_URL = 'https://open.weixin.qq.com/connect/qrconnect'
+    AUTHORIZATION_URL = 'https://open.weixin.qq.com/connect/oauth2/authorize'
+
     ACCESS_TOKEN_URL = 'https://api.weixin.qq.com/sns/oauth2/access_token'
     ACCESS_TOKEN_METHOD = 'POST'
     REDIRECT_STATE = False
@@ -21,6 +23,11 @@ class WeixinOAuth2(BaseOAuth2):
         ('nickname', 'username'),
         ('headimgurl', 'profile_image_url'),
     ]
+
+    def auth_url(self):
+        r = super(WeixinOAuth2, self).auth_url()
+        r += '#wechat_redirect'
+        return r
 
     def get_user_details(self, response):
         """Return user details from Weixin. API URL is:
@@ -48,14 +55,15 @@ class WeixinOAuth2(BaseOAuth2):
 
     def auth_params(self, state=None):
         appid, secret = self.get_key_and_secret()
-        params = {
-            'appid': appid,
-            'redirect_uri': self.get_redirect_uri(state)
-        }
-        if self.STATE_PARAMETER and state:
-            params['state'] = state
+        params = OrderedDict([
+            ('appid', appid),
+            ('redirect_uri', self.get_redirect_uri(state)),
+        ])
         if self.RESPONSE_TYPE:
             params['response_type'] = self.RESPONSE_TYPE
+        params['scope'] = 'snsapi_userinfo'
+        params['state'] = 'STATE'
+
         return params
 
     def auth_complete_params(self, state=None):
@@ -83,7 +91,7 @@ class WeixinOAuth2(BaseOAuth2):
         try:
             response = self.request_access_token(
                 self.ACCESS_TOKEN_URL,
-                data=self.auth_complete_params(self.validate_state()),
+                data=self.auth_complete_params(),  # self.validate_state()),
                 headers=self.auth_headers(),
                 method=self.ACCESS_TOKEN_METHOD
             )
@@ -94,8 +102,10 @@ class WeixinOAuth2(BaseOAuth2):
                 raise
         except KeyError:
             raise AuthUnknownError(self)
+
         if 'errcode' in response:
             raise AuthCanceled(self)
         self.process_error(response)
+
         return self.do_auth(response['access_token'], response=response,
                             *args, **kwargs)
